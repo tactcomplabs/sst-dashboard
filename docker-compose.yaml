@@ -1,0 +1,85 @@
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.10
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    networks:
+      - jenkins-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -vq '\"status\":\"red\"'"]
+      interval: 10s
+      timeout: 60s
+      retries: 5
+    restart: unless-stopped
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:7.17.10
+    container_name: logstash
+    volumes:
+      - ./logstash.conf:/usr/share/logstash/pipeline/logstash.conf
+    ports:
+      - "100.98.179.59:5044:5044"
+    environment:
+      - LS_JAVA_OPTS=-Xmx1024m -Xms1024m
+    depends_on:
+      - elasticsearch
+    networks:
+      - jenkins-net
+    restart: unless-stopped
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:7.17.10
+    container_name: kibana
+    ports:
+      - "100.98.179.59:5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - jenkins-net
+    restart: unless-stopped
+
+  dashboard:
+    build: ./jenkins-dashboard
+    container_name: jenkins-dashboard
+    environment:
+      - ELASTICSEARCH_HOST=http://elasticsearch:9200
+      - IMPORTANT_BRANCHES=main,master
+      - DASHBOARD_DOMAIN=sstdashboard.com
+    depends_on:
+      - elasticsearch
+    networks:
+      - jenkins-net
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy
+    ports:
+      - "0.0.0.0:80:80"
+      - "0.0.0.0:443:443"
+      - "0.0.0.0:443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - dashboard
+    networks:
+      - jenkins-net
+    restart: unless-stopped
+
+volumes:
+  es_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  jenkins-net:
+    driver: bridge
