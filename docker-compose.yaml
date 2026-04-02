@@ -46,11 +46,12 @@ services:
     restart: unless-stopped
 
   dashboard:
-    build: ./jenkins-dashboard
+    image: ghcr.io/tactcomplabs/sst-dashboard:latest
     container_name: jenkins-dashboard
     environment:
       - ELASTICSEARCH_HOST=http://elasticsearch:9200
-      - IMPORTANT_BRANCHES=main,master
+      - IMPORTANT_BRANCHES=main,master,devel
+      - MATRIX_BRANCHES=main,master,devel,iconsole
       - DASHBOARD_DOMAIN=sstdashboard.com
     depends_on:
       - elasticsearch

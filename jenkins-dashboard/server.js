@@ -17,6 +17,12 @@ const IMPORTANT_BRANCHES = (process.env.IMPORTANT_BRANCHES || 'main,master')
   .map(b => b.trim())
   .filter(b => b.length > 0);
 
+// If set, only these branches appear in the matrix view
+const MATRIX_BRANCHES = (process.env.MATRIX_BRANCHES || '')
+  .split(',')
+  .map(b => b.trim())
+  .filter(b => b.length > 0);
+
 const isImportantBranch = (branch) => {
   if (!branch) return false;
   return IMPORTANT_BRANCHES.some(pattern => {
@@ -1982,6 +1988,10 @@ app.get('/api/matrix', validateQueryParams, async (req, res) => {
       const duration = extractBuildDuration(hits);
 
       if (branch === 'unknown' && includeUnknownBranch !== 'true') {
+        continue;
+      }
+
+      if (MATRIX_BRANCHES.length > 0 && !MATRIX_BRANCHES.includes(branch)) {
         continue;
       }
 
