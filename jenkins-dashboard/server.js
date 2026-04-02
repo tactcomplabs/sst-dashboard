@@ -898,27 +898,32 @@ app.get('/api/jobs/:jobName/builds', validateJobName, validateQueryParams, async
     const limit = parseInt(req.query.limit) || 20;
     const branchFilter = req.query.branch || null;
 
-    const baseQuery = { term: { 'data.projectName.keyword': jobName } };
-
-    if (branchFilter) {
-      baseQuery.bool.filter = [
-        {
+    const baseQuery = branchFilter
+      ? {
           bool: {
-            should: [
-              { wildcard: { 'data.projectName.keyword': `*/${branchFilter}` } },
-              { term: { 'data.buildVariables.BRANCH.keyword': branchFilter } },
-              { term: { 'data.buildVariables.GIT_BRANCH.keyword': branchFilter } },
-              { term: { 'data.buildVariables.BRANCH_NAME.keyword': branchFilter } },
-              { term: { 'data.branch.keyword': branchFilter } },
-              { term: { 'branch.keyword': branchFilter } },
-              { term: { 'data.buildVariables.GIT_BRANCH.keyword': `origin/${branchFilter}` } },
-              { term: { 'data.buildVariables.GIT_BRANCH.keyword': `refs/heads/${branchFilter}` } }
+            must: [
+              { term: { 'data.projectName.keyword': jobName } }
             ],
-            minimum_should_match: 1
+            filter: [
+              {
+                bool: {
+                  should: [
+                    { wildcard: { 'data.projectName.keyword': `*/${branchFilter}` } },
+                    { term: { 'data.buildVariables.BRANCH.keyword': branchFilter } },
+                    { term: { 'data.buildVariables.GIT_BRANCH.keyword': branchFilter } },
+                    { term: { 'data.buildVariables.BRANCH_NAME.keyword': branchFilter } },
+                    { term: { 'data.branch.keyword': branchFilter } },
+                    { term: { 'branch.keyword': branchFilter } },
+                    { term: { 'data.buildVariables.GIT_BRANCH.keyword': `origin/${branchFilter}` } },
+                    { term: { 'data.buildVariables.GIT_BRANCH.keyword': `refs/heads/${branchFilter}` } }
+                  ],
+                  minimum_should_match: 1
+                }
+              }
+            ]
           }
         }
-      ];
-    }
+      : { term: { 'data.projectName.keyword': jobName } };
 
     const result = await esClient.search({
       index: 'jenkins-*',
@@ -1745,22 +1750,27 @@ app.get('/api/jobs/:jobName/test-metrics', validateJobName, validateQueryParams,
     const limit = parseInt(req.query.limit) || 30;
     const branchFilter = req.query.branch || null;
 
-    const baseQuery = { term: { 'data.projectName.keyword': jobName } };
-
-    if (branchFilter) {
-      baseQuery.bool.filter = [
-        {
+    const baseQuery = branchFilter
+      ? {
           bool: {
-            should: [
-              { wildcard: { 'data.projectName.keyword': `*/${branchFilter}` } },
-              { term: { 'data.buildVariables.BRANCH.keyword': branchFilter } },
-              { term: { 'data.buildVariables.GIT_BRANCH.keyword': branchFilter } }
+            must: [
+              { term: { 'data.projectName.keyword': jobName } }
             ],
-            minimum_should_match: 1
+            filter: [
+              {
+                bool: {
+                  should: [
+                    { wildcard: { 'data.projectName.keyword': `*/${branchFilter}` } },
+                    { term: { 'data.buildVariables.BRANCH.keyword': branchFilter } },
+                    { term: { 'data.buildVariables.GIT_BRANCH.keyword': branchFilter } }
+                  ],
+                  minimum_should_match: 1
+                }
+              }
+            ]
           }
         }
-      ];
-    }
+      : { term: { 'data.projectName.keyword': jobName } };
 
     const buildsResult = await esClient.search({
       index: 'jenkins-*',
