@@ -59,6 +59,15 @@ services:
       - jenkins-net
     restart: unless-stopped
 
+  watchtower:
+    image: containrrr/watchtower
+    container_name: watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /home/devuser/.docker/config.json:/config.json:ro
+    command: --interval 300 --cleanup jenkins-dashboard
+    restart: unless-stopped
+
   caddy:
     image: caddy:2-alpine
     container_name: caddy
