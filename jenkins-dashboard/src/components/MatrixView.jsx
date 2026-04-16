@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
-import { CheckCircle2, XCircle, HelpCircle, Clock, AlertTriangle, GitBranch, Box, X, Code, TestTube, Ban } from 'lucide-react';
+import { CheckCircle2, XCircle, HelpCircle, Clock, AlertTriangle, GitBranch, Box, X, Code, TestTube, Ban, ChevronRight, ChevronDown } from 'lucide-react';
 import * as api from '../api';
 import { formatDurationSec, formatDuration } from '../utils';
 
@@ -331,6 +331,23 @@ function StatusCell({ cell, dimmed = false }) {
             </p>
           )}
 
+          {!loading && tooltipData && (() => {
+            const enabledOptions = getEnabledOptions(tooltipData.buildVariables);
+            if (enabledOptions.length === 0) return null;
+            return (
+              <div className="flex flex-wrap gap-1 pt-2">
+                {enabledOptions.map(opt => (
+                  <span
+                    key={opt}
+                    className="px-2 py-0.5 bg-slate-800 text-slate-400 text-xs rounded-full"
+                  >
+                    {opt}
+                  </span>
+                ))}
+              </div>
+            );
+          })()}
+
           <p className="text-xs text-slate-500 mt-2">
             Click to view full logs
           </p>
@@ -385,11 +402,39 @@ function StatusCell({ cell, dimmed = false }) {
   );
 }
 
-function MatrixView({ branches, targets, cells, criticalFailures = [], importantBranches = [], statusFilter = null }) {
+function MatrixView({ branches, targets, cells, recentBuilds = [], criticalFailures = [], importantBranches = [], statusFilter = null }) {
   // Use sessionStorage to persist dismissal for the duration of the visit
   const [alertDismissed, setAlertDismissed] = useState(() => {
     return sessionStorage.getItem('criticalFailuresAlertDismissed') === 'true';
   });
+
+  const [expandedBranches, setExpandedBranches] = useState(new Set());
+
+  const toggleBranch = (branch) => {
+    setExpandedBranches(prev => {
+      const next = new Set(prev);
+      if (next.has(branch)) next.delete(branch);
+      else next.add(branch);
+      return next;
+    });
+  };
+
+  const recentBuildsData = useMemo(() => {
+    const byBranchRank = new Map();
+    const branchMaxRank = new Map();
+    const rankMaxBuildNum = new Map();
+    for (const b of recentBuilds) {
+      byBranchRank.set(`${b.branch}|${b.rank}|${b.target}`, b);
+      const curMaxRank = branchMaxRank.get(b.branch);
+      if (curMaxRank === undefined || b.rank > curMaxRank) branchMaxRank.set(b.branch, b.rank);
+      const rankKey = `${b.branch}|${b.rank}`;
+      const curMaxNum = rankMaxBuildNum.get(rankKey);
+      if (b.buildNum != null && (curMaxNum === undefined || b.buildNum > curMaxNum)) {
+        rankMaxBuildNum.set(rankKey, b.buildNum);
+      }
+    }
+    return { byBranchRank, branchMaxRank, rankMaxBuildNum };
+  }, [recentBuilds]);
 
   const dismissAlert = () => {
     sessionStorage.setItem('criticalFailuresAlertDismissed', 'true');
@@ -563,73 +608,125 @@ function MatrixView({ branches, targets, cells, criticalFailures = [], important
               {filteredBranches.map((branch, rowIndex) => {
                 const branchIsImportant = isImportant(branch);
                 const isEvenRow = rowIndex % 2 === 0;
+                const maxRank = recentBuildsData.branchMaxRank.get(branch);
+                const hasHistory = maxRank !== undefined && maxRank > 0;
+                const isExpanded = expandedBranches.has(branch);
+                const historyRanks = hasHistory
+                  ? Array.from({ length: Math.min(maxRank, 4) }, (_, i) => i + 1)
+                  : [];
 
                 return (
-                  <tr 
-                    key={branch}
-                    className={`
-                      ${isEvenRow ? 'bg-slate-900/30' : 'bg-slate-900/10'}
-                      ${branchIsImportant ? 'bg-emerald-500/5' : ''}
-                      hover:bg-slate-800/50 transition-colors
-                    `}
-                  >
-                    {/* Branch name cell - sticky */}
-                    <td
+                  <React.Fragment key={branch}>
+                    <tr
                       className={`
-                        sticky left-0 z-10 p-3 border-r border-slate-700/50
-                        ${isEvenRow ? 'bg-slate-900/95' : 'bg-slate-950/95'}
-                        ${branchIsImportant ? 'bg-emerald-950/80' : ''}
-                        backdrop-blur-sm
+                        ${isEvenRow ? 'bg-slate-900/30' : 'bg-slate-900/10'}
+                        ${branchIsImportant ? 'bg-emerald-500/5' : ''}
+                        hover:bg-slate-800/50 transition-colors
                       `}
                     >
-                      <div className="flex items-center gap-3">
-                        <div className={`
-                          p-1.5 rounded-md flex-shrink-0
-                          ${branchIsImportant 
-                            ? 'bg-emerald-500/20 text-emerald-400' 
-                            : 'bg-slate-700/50 text-slate-500'}
-                        `}>
-                          <GitBranch className="w-3.5 h-3.5" />
-                        </div>
-                        <span
-                          className={`
-                            text-sm font-medium
-                            ${branchIsImportant ? 'text-emerald-300' : 'text-slate-300'}
-                          `}
-                          title={branch}
-                        >
-                          {branch === 'unknown' ? (
-                            <span className="italic text-slate-500">(unknown)</span>
+                      {/* Branch name cell - sticky */}
+                      <td
+                        className={`
+                          sticky left-0 z-10 p-3 border-r border-slate-700/50
+                          ${isEvenRow ? 'bg-slate-900/95' : 'bg-slate-950/95'}
+                          ${branchIsImportant ? 'bg-emerald-950/80' : ''}
+                          backdrop-blur-sm
+                        `}
+                      >
+                        <div className="flex items-center gap-2">
+                          {hasHistory ? (
+                            <button
+                              onClick={() => toggleBranch(branch)}
+                              className="p-1 rounded hover:bg-slate-700/50 transition-colors flex-shrink-0 text-slate-500 hover:text-slate-300"
+                              title={isExpanded ? 'Hide recent builds' : 'Show recent builds'}
+                            >
+                              {isExpanded
+                                ? <ChevronDown className="w-3.5 h-3.5" />
+                                : <ChevronRight className="w-3.5 h-3.5" />
+                              }
+                            </button>
                           ) : (
-                            branch
+                            <div className="w-[26px] flex-shrink-0" />
                           )}
-                        </span>
-                        {branchIsImportant && (
-                          <span className="px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-emerald-500/20 text-emerald-400 rounded flex-shrink-0">
-                            Main
-                          </span>
-                        )}
-                      </div>
-                    </td>
-
-                    {/* Status cells */}
-                    {targets.map(target => {
-                      const cell = getCell(branch, target);
-                      const isDimmed = statusFilter && cell && cell.result !== statusFilter;
-                      return (
-                        <td
-                          key={target}
-                          className="p-1"
-                        >
-                          <div className="w-full h-12 flex items-center justify-center">
-                            <div className="w-12 h-12 max-w-full">
-                              <StatusCell cell={cell} dimmed={isDimmed} />
-                            </div>
+                          <div className={`
+                            p-1.5 rounded-md flex-shrink-0
+                            ${branchIsImportant
+                              ? 'bg-emerald-500/20 text-emerald-400'
+                              : 'bg-slate-700/50 text-slate-500'}
+                          `}>
+                            <GitBranch className="w-3.5 h-3.5" />
                           </div>
-                        </td>
+                          <span
+                            className={`
+                              text-sm font-medium
+                              ${branchIsImportant ? 'text-emerald-300' : 'text-slate-300'}
+                            `}
+                            title={branch}
+                          >
+                            {branch === 'unknown' ? (
+                              <span className="italic text-slate-500">(unknown)</span>
+                            ) : (
+                              branch
+                            )}
+                          </span>
+                          {branchIsImportant && (
+                            <span className="px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-emerald-500/20 text-emerald-400 rounded flex-shrink-0">
+                              Main
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Status cells */}
+                      {targets.map(target => {
+                        const cell = getCell(branch, target);
+                        const isDimmed = statusFilter && cell && cell.result !== statusFilter;
+                        return (
+                          <td
+                            key={target}
+                            className="p-1"
+                          >
+                            <div className="w-full h-12 flex items-center justify-center">
+                              <div className="w-12 h-12 max-w-full">
+                                <StatusCell cell={cell} dimmed={isDimmed} />
+                              </div>
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+
+                    {isExpanded && historyRanks.map(rank => {
+                      const maxBuildNum = recentBuildsData.rankMaxBuildNum.get(`${branch}|${rank}`);
+                      return (
+                        <tr
+                          key={`${branch}-history-${rank}`}
+                          className="bg-slate-900/20 hover:bg-slate-800/40 transition-colors"
+                        >
+                          <td
+                            className="sticky left-0 z-10 py-2 px-3 pl-14 border-r border-slate-700/50 bg-slate-950/90 backdrop-blur-sm"
+                            title="Highest build number in this row across targets"
+                          >
+                            <span className="text-xs font-mono text-slate-500">
+                              {maxBuildNum != null ? `#${maxBuildNum}` : `−${rank}`}
+                            </span>
+                          </td>
+                          {targets.map(target => {
+                            const histCell = recentBuildsData.byBranchRank.get(`${branch}|${rank}|${target}`);
+                            return (
+                              <td key={target} className="p-1">
+                                <div className="w-full h-12 flex items-center justify-center">
+                                  <div className="w-12 h-12 max-w-full">
+                                    <StatusCell cell={histCell || null} />
+                                  </div>
+                                </div>
+                              </td>
+                            );
+                          })}
+                        </tr>
                       );
                     })}
-                  </tr>
+                  </React.Fragment>
                 );
               })}
             </tbody>
@@ -671,7 +768,7 @@ function MatrixView({ branches, targets, cells, criticalFailures = [], important
         </div>
 
         <div className="h-4 w-px bg-slate-700" />
-        
+
         <div className="flex items-center gap-2">
           <div className="p-1 bg-emerald-500/20 rounded-md">
             <GitBranch className="w-3 h-3 text-emerald-400" />

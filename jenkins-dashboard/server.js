@@ -755,6 +755,17 @@ const extractTarget = (hit) => {
   return projectName;
 };
 
+const extractBuildVariables = (hits) => {
+  if (!Array.isArray(hits)) hits = [hits];
+  for (const hit of hits) {
+    const vars = hit._source?.data?.buildVariables || hit._source?.buildVariables;
+    if (vars && typeof vars === 'object' && Object.keys(vars).length > 0) return vars;
+  }
+  return null;
+};
+
+const TRACKED_BUILD_OPTIONS = ['EXTTEST', 'SST_TEST_CORE', 'SANITIZER', 'VALGRIND', 'DEBUG', 'HEADERCHECK', 'CLANGFORMAT'];
+
 app.get('/api/health', async (req, res) => {
   try {
     const health = await esClient.cluster.health();
@@ -1592,7 +1603,7 @@ app.get('/api/jobs/:jobName/builds/:buildNum/failure-summary', validateJobName, 
           }
         },
         sort: [{ '@timestamp': { order: 'desc' } }],
-        _source: ['data.result', 'result', 'message', '@timestamp']
+        _source: ['data.result', 'result', 'message', '@timestamp', 'data.buildVariables', 'buildVariables']
       }
     });
 
@@ -1605,8 +1616,10 @@ app.get('/api/jobs/:jobName/builds/:buildNum/failure-summary', validateJobName, 
       if (buildResult) break;
     }
 
+    const buildVariables = extractBuildVariables(resultHits);
+
     if (buildResult === 'SUCCESS') {
-      return res.json({ jobName, buildNum: buildNumber, result: 'SUCCESS', failureAnalysis: null });
+      return res.json({ jobName, buildNum: buildNumber, result: 'SUCCESS', failureAnalysis: null, buildVariables });
     }
 
     const logsQuery = await esClient.search({
@@ -1642,7 +1655,8 @@ app.get('/api/jobs/:jobName/builds/:buildNum/failure-summary', validateJobName, 
       jobName,
       buildNum: buildNumber,
       result: buildResult || 'UNKNOWN',
-      failureAnalysis
+      failureAnalysis,
+      buildVariables
     });
   } catch (error) {
     console.error('Error fetching failure summary:', error);
@@ -1928,7 +1942,7 @@ app.get('/api/matrix', validateQueryParams, async (req, res) => {
               by_build: {
                 terms: {
                   field: 'data.buildNum',
-                  size: 10,
+                  size: 50,
                   order: { '_key': 'desc' }
                 },
                 aggs: {
@@ -1970,12 +1984,14 @@ app.get('/api/matrix', validateQueryParams, async (req, res) => {
           const key = `${projectName}|${buildNum}`;
           if (!allBuilds.has(key)) {
             const primaryHit = hits[0];
+            const buildVars = extractBuildVariables(hits);
             allBuilds.set(key, {
               projectName,
               buildNum,
               hit: primaryHit,
               hits,
-              result: buildResult
+              result: buildResult,
+              buildVars
             });
           }
         }
@@ -1985,11 +2001,12 @@ app.get('/api/matrix', validateQueryParams, async (req, res) => {
     processProjectBuckets(body.aggregations?.by_project?.buckets);
 
     const matrixCells = new Map();
+    const recentBuildsByCell = new Map();
     const allBranches = new Set();
     const allTargets = new Set();
     const branchLastSeen = new Map();
 
-    for (const [, { projectName, buildNum, hit, hits, result: preFoundResult }] of allBuilds) {
+    for (const [, { projectName, buildNum, hit, hits, result: preFoundResult, buildVars }] of allBuilds) {
       let branch = extractBranch(hit) || 'unknown';
       const target = extractTarget(hit);
       if (target.startsWith('SST-BENCH-')) continue;
@@ -2052,6 +2069,7 @@ app.get('/api/matrix', validateQueryParams, async (req, res) => {
           timestamp,
           projectName,
           duration,
+          buildVars,
           previousResult,
           previousBuildNum,
           needsResultFetch: !buildResult
@@ -2060,6 +2078,15 @@ app.get('/api/matrix', validateQueryParams, async (req, res) => {
         existingCell.previousResult = buildResult;
         existingCell.previousBuildNum = buildNum;
       }
+
+      if (!recentBuildsByCell.has(cellKey)) recentBuildsByCell.set(cellKey, []);
+      recentBuildsByCell.get(cellKey).push({
+        buildNum,
+        result: buildResult,
+        projectName,
+        timestamp,
+        duration
+      });
     }
 
     for (const cell of matrixCells.values()) {
@@ -2067,6 +2094,24 @@ app.get('/api/matrix', validateQueryParams, async (req, res) => {
         cell.result = applyStaleLogic(null, cell.timestamp, 'IN_PROGRESS');
       }
       delete cell.needsResultFetch;
+    }
+
+    const recentBuilds = [];
+    for (const [cellKey, builds] of recentBuildsByCell) {
+      builds.sort((a, b) => (b.buildNum || 0) - (a.buildNum || 0));
+      const [cellBranch, cellTarget] = cellKey.split('|');
+      builds.slice(0, 5).forEach((b, rank) => {
+        recentBuilds.push({
+          branch: cellBranch,
+          target: cellTarget,
+          rank,
+          buildNum: b.buildNum,
+          result: b.result || applyStaleLogic(null, b.timestamp, 'IN_PROGRESS'),
+          projectName: b.projectName,
+          timestamp: b.timestamp,
+          duration: b.duration
+        });
+      });
     }
 
     const branches = Array.from(allBranches).sort((a, b) => {
@@ -2082,10 +2127,22 @@ app.get('/api/matrix', validateQueryParams, async (req, res) => {
 
     const targets = Array.from(allTargets).sort();
 
-    const cells = Array.from(matrixCells.values()).map(cell => ({
-      ...cell,
-      isImportant: isImportantBranch(cell.branch)
-    }));
+    const cells = Array.from(matrixCells.values()).map(cell => {
+      const { buildVars: cellBuildVars, ...rest } = cell;
+      const enabledOptions = [];
+      if (cellBuildVars) {
+        for (const opt of TRACKED_BUILD_OPTIONS) {
+          if (cellBuildVars[opt] === 'true' || cellBuildVars[opt] === true) {
+            enabledOptions.push(opt);
+          }
+        }
+      }
+      return {
+        ...rest,
+        enabledOptions,
+        isImportant: isImportantBranch(cell.branch)
+      };
+    });
 
     const stats = {
       totalCells: cells.length,
@@ -2103,6 +2160,7 @@ app.get('/api/matrix', validateQueryParams, async (req, res) => {
       branches,
       targets,
       cells,
+      recentBuilds,
       stats,
       criticalFailures,
       importantBranches: IMPORTANT_BRANCHES,

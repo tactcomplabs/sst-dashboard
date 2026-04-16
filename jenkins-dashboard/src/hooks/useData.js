@@ -172,6 +172,7 @@ export function useMatrix(options = {}) {
     branches: [],
     targets: [],
     cells: [],
+    recentBuilds: [],
     stats: null,
     criticalFailures: [],
     importantBranches: []

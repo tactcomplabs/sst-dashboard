@@ -161,6 +161,7 @@ function HomePage() {
         branches={matrixData.branches}
         targets={matrixData.targets}
         cells={matrixData.cells}
+        recentBuilds={matrixData.recentBuilds || []}
         criticalFailures={matrixData.criticalFailures}
         importantBranches={matrixData.importantBranches}
         statusFilter={statusFilter}
