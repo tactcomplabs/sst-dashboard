@@ -51,7 +51,7 @@ services:
     environment:
       - ELASTICSEARCH_HOST=http://elasticsearch:9200
       - IMPORTANT_BRANCHES=main,master,devel
-      - MATRIX_BRANCHES=main,master,devel,iconsole
+      - MATRIX_BRANCHES=master,devel
       - DASHBOARD_DOMAIN=sstdashboard.com
     depends_on:
       - elasticsearch
