@@ -1939,18 +1939,27 @@ app.get('/api/matrix', validateQueryParams, async (req, res) => {
               size: 1000
             },
             aggs: {
-              by_build: {
+              by_branch: {
                 terms: {
-                  field: 'data.buildNum',
-                  size: 50,
-                  order: { '_key': 'desc' }
+                  field: 'data.buildVariables.BRANCH.keyword',
+                  size: 30,
+                  missing: '__nobranch__'
                 },
                 aggs: {
-                  latest_docs: {
-                    top_hits: {
+                  by_build: {
+                    terms: {
+                      field: 'data.buildNum',
                       size: 5,
-                      sort: [{ '@timestamp': { order: 'desc' } }],
-                      _source: ['data.projectName', 'data.buildNum', 'data.result', 'result', 'message', 'data.buildVariables', 'buildVariables', 'data.buildDuration', '@timestamp', '@buildTimestamp']
+                      order: { '_key': 'desc' }
+                    },
+                    aggs: {
+                      latest_docs: {
+                        top_hits: {
+                          size: 5,
+                          sort: [{ '@timestamp': { order: 'desc' } }],
+                          _source: ['data.projectName', 'data.buildNum', 'data.result', 'result', 'message', 'data.buildVariables', 'buildVariables', 'data.buildDuration', '@timestamp', '@buildTimestamp']
+                        }
+                      }
                     }
                   }
                 }
@@ -1970,29 +1979,31 @@ app.get('/api/matrix', validateQueryParams, async (req, res) => {
         const projectName = projectBucket.key;
         if (!projectName) continue;
 
-        for (const buildBucket of (projectBucket.by_build?.buckets || [])) {
-          const buildNum = buildBucket.key;
-          const hits = buildBucket.latest_docs?.hits?.hits || [];
-          if (hits.length === 0) continue;
+        for (const branchBucket of (projectBucket.by_branch?.buckets || [])) {
+          for (const buildBucket of (branchBucket.by_build?.buckets || [])) {
+            const buildNum = buildBucket.key;
+            const hits = buildBucket.latest_docs?.hits?.hits || [];
+            if (hits.length === 0) continue;
 
-          let buildResult = null;
-          for (const hit of hits) {
-            buildResult = extractBuildResult(hit);
-            if (buildResult) break;
-          }
+            let buildResult = null;
+            for (const hit of hits) {
+              buildResult = extractBuildResult(hit);
+              if (buildResult) break;
+            }
 
-          const key = `${projectName}|${buildNum}`;
-          if (!allBuilds.has(key)) {
-            const primaryHit = hits[0];
-            const buildVars = extractBuildVariables(hits);
-            allBuilds.set(key, {
-              projectName,
-              buildNum,
-              hit: primaryHit,
-              hits,
-              result: buildResult,
-              buildVars
-            });
+            const key = `${projectName}|${buildNum}`;
+            if (!allBuilds.has(key)) {
+              const primaryHit = hits[0];
+              const buildVars = extractBuildVariables(hits);
+              allBuilds.set(key, {
+                projectName,
+                buildNum,
+                hit: primaryHit,
+                hits,
+                result: buildResult,
+                buildVars
+              });
+            }
           }
         }
       }
