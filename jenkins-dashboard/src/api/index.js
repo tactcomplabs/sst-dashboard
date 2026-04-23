@@ -80,3 +80,24 @@ export async function getMatrix(options = {}) {
 export async function getParserBenchmarks() {
   return fetchJSON('/benchmarks/parser-bench');
 }
+
+export async function getSstPerfOverview() {
+  return fetchJSON('/benchmarks/sst-perf/overview');
+}
+
+export async function getSstPerfDetail(benchmarkId, options = {}) {
+  const params = new URLSearchParams();
+  if (options.metric) params.set('metric', options.metric);
+  if (options.ranks != null) params.set('ranks', options.ranks);
+  if (options.threads != null) params.set('threads', options.threads);
+  if (options.sst_version) params.set('sst_version', options.sst_version);
+  if (options.since) params.set('since', options.since);
+  if (options.until) params.set('until', options.until);
+  if (options.limit) params.set('limit', options.limit);
+  const q = params.toString();
+  return fetchJSON(`/benchmarks/sst-perf/${encodeURIComponent(benchmarkId)}${q ? '?' + q : ''}`);
+}
+
+export async function getSstPerfFilters(benchmarkId) {
+  return fetchJSON(`/benchmarks/sst-perf/${encodeURIComponent(benchmarkId)}/filters`);
+}

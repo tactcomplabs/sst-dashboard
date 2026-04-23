@@ -1,0 +1,61 @@
+{
+  "index_patterns": ["jenkins-*"],
+  "order": 10,
+  "settings": {
+    "index.mapping.total_fields.limit": 2000
+  },
+  "mappings": {
+    "properties": {
+      "sst_bench_perf": {
+        "type": "object",
+        "properties": {
+          "schema_version": { "type": "integer" },
+          "emitted_at": { "type": "date" },
+          "run_id": { "type": "keyword" },
+          "benchmark_id": { "type": "keyword" },
+          "sweep_name": { "type": "keyword" },
+          "sdl_file": { "type": "keyword" },
+          "jobtype": { "type": "keyword" },
+          "jobid": { "type": "long" },
+          "ranks": { "type": "integer" },
+          "threads": { "type": "integer" },
+          "nodes": { "type": "integer" },
+          "sst_version": { "type": "keyword" },
+          "sst_bench_sha": { "type": "keyword" },
+          "host": { "type": "keyword" },
+          "simulated_time_ns": { "type": "double" },
+          "sdl_params": {
+            "type": "object",
+            "enabled": false
+          },
+          "sst_params": {
+            "type": "object",
+            "enabled": false
+          },
+          "timing": {
+            "type": "object",
+            "properties": {
+              "local_max_rss": { "type": "long" },
+              "global_max_rss": { "type": "long" },
+              "local_max_pf": { "type": "long" },
+              "global_pf": { "type": "long" },
+              "global_max_io_in": { "type": "long" },
+              "global_max_io_out": { "type": "long" },
+              "global_max_sync_data_size": { "type": "long" },
+              "global_sync_data_size": { "type": "long" },
+              "max_mempool_size": { "type": "long" },
+              "global_mempool_size": { "type": "long" },
+              "global_active_activities": { "type": "long" },
+              "global_current_tv_depth": { "type": "long" },
+              "global_max_tv_depth": { "type": "long" },
+              "max_build_time": { "type": "double" },
+              "max_run_time": { "type": "double" },
+              "max_total_time": { "type": "double" },
+              "simulated_time_ua": { "type": "keyword" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

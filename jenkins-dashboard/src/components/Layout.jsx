@@ -15,9 +15,18 @@ function Layout({ children }) {
     if (pathSegments[0] === 'jobs' && pathSegments[1]) {
       breadcrumbs.push({ label: 'Jobs', path: '/' });
       breadcrumbs.push({ label: decodeURIComponent(pathSegments[1]), path: `/jobs/${pathSegments[1]}` });
-      
+
       if (pathSegments[2] === 'builds' && pathSegments[3]) {
         breadcrumbs.push({ label: `Build #${pathSegments[3]}`, path: location.pathname });
+      }
+    }
+    if (pathSegments[0] === 'benchmarks') {
+      breadcrumbs.push({ label: 'Benchmarks', path: '/benchmarks/sst-perf' });
+      if (pathSegments[1] === 'sst-perf') {
+        breadcrumbs.push({ label: 'SST Perf', path: '/benchmarks/sst-perf' });
+        if (pathSegments[2]) {
+          breadcrumbs.push({ label: pathSegments[2], path: location.pathname });
+        }
       }
     }
   }
@@ -54,8 +63,31 @@ function Layout({ children }) {
               </div>
             </Link>
 
-            {/* Status indicators */}
+            {/* Nav + status indicators */}
             <div className="flex items-center gap-4">
+              <nav className="hidden md:flex items-center gap-1 text-sm">
+                <Link
+                  to="/"
+                  className={`px-3 py-1.5 rounded-md transition-colors ${
+                    location.pathname === '/' || location.pathname.startsWith('/jobs')
+                      ? 'text-white bg-slate-800/60'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800/30'
+                  }`}
+                >
+                  Builds
+                </Link>
+                <Link
+                  to="/benchmarks/sst-perf"
+                  className={`px-3 py-1.5 rounded-md transition-colors ${
+                    location.pathname.startsWith('/benchmarks')
+                      ? 'text-white bg-slate-800/60'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800/30'
+                  }`}
+                >
+                  Benchmarks
+                </Link>
+              </nav>
+
               <div className="hidden sm:flex items-center gap-2 text-sm">
                 <Database className={`w-4 h-4 ${statusColor}`} />
                 <span className="text-slate-400">Elasticsearch:</span>
@@ -63,7 +95,7 @@ function Layout({ children }) {
                   {esStatus.charAt(0).toUpperCase() + esStatus.slice(1)}
                 </span>
               </div>
-              
+
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800/50 border border-slate-700/50">
                 <Zap className="w-4 h-4 text-emerald-400" />
                 <span className="text-sm text-slate-300">Live</span>

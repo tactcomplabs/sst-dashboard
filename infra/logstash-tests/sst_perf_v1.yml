@@ -1,0 +1,50 @@
+# logstash-filter-verifier fixtures for the sst_bench_perf filter.
+#
+# Run with (if logstash-filter-verifier is installed):
+#   logstash-filter-verifier standalone \
+#     --logstash-path /usr/share/logstash \
+#     ../../logstash.conf \
+#     sst_perf_v1.yml
+#
+# This file exists primarily as executable documentation of the expected
+# contract: a message containing ###SST_BENCH_PERF_V1###...###END### is parsed
+# into a structured sst_bench_perf subdocument, and a document_id is derived
+# from (run_id, jobid, jobtype).
+
+---
+fields:
+  type: jenkins
+
+testcases:
+  - description: "valid marker is extracted into sst_bench_perf subdoc"
+    input: |
+      ###SST_BENCH_PERF_V1###{"schema_version":1,"run_id":"abc","jobid":42,"jobtype":"BASE","benchmark_id":"ff00","ranks":4,"threads":2,"timing":{"max_run_time":1.23}}###END###
+    expected:
+      - sst_bench_perf:
+          schema_version: 1
+          run_id: abc
+          jobid: 42
+          jobtype: BASE
+          benchmark_id: ff00
+          ranks: 4
+          threads: 2
+
+  - description: "marker embedded in build log is still extracted"
+    input: "[build] starting sweep... ###SST_BENCH_PERF_V1###{\"schema_version\":1,\"run_id\":\"x\",\"jobid\":7,\"jobtype\":\"BASE\"}###END### done"
+    expected:
+      - sst_bench_perf:
+          schema_version: 1
+          run_id: x
+          jobid: 7
+          jobtype: BASE
+
+  - description: "malformed json does not set sst_bench_perf"
+    input: "###SST_BENCH_PERF_V1###{not json}###END###"
+    expected:
+      - tags:
+          - _sst_perf_jsonfail
+
+  - description: "unrelated build log passes through untouched"
+    input: "Finished: SUCCESS"
+    expected:
+      - message: "Finished: SUCCESS"

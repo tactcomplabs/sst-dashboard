@@ -5,6 +5,8 @@ import rateLimit from 'express-rate-limit';
 import { Client } from '@elastic/elasticsearch';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import fs from 'fs';
+import { parsePerfMarkers } from './lib/perfMarker.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -2288,12 +2290,267 @@ app.get('/api/benchmarks/parser-bench', async (req, res) => {
   }
 });
 
+const PERF_INDEX = 'jenkins-*';
+const PERF_METRICS = new Set([
+  'max_run_time',
+  'max_total_time',
+  'max_build_time',
+  'global_max_rss',
+  'local_max_rss',
+  'max_mempool_size',
+  'global_mempool_size',
+  'global_max_tv_depth',
+  'global_max_sync_data_size',
+  'simulated_time_ns',
+]);
+const PERF_DEFAULT_METRIC = 'max_run_time';
+
+const perfParseCounters = { hits: 0, fallback_parse_attempts: 0, fallback_parsed: 0, fallback_failed: 0 };
+
+function perfMetricField(metric) {
+  if (metric === 'simulated_time_ns') return 'sst_bench_perf.simulated_time_ns';
+  return `sst_bench_perf.timing.${metric}`;
+}
+
+function pickPerfResponseFields(source) {
+  const p = source?.sst_bench_perf;
+  if (!p || typeof p !== 'object') return null;
+  return {
+    schema_version: p.schema_version,
+    emitted_at: p.emitted_at,
+    run_id: p.run_id,
+    benchmark_id: p.benchmark_id,
+    sweep_name: p.sweep_name,
+    sdl_file: p.sdl_file,
+    jobtype: p.jobtype,
+    jobid: p.jobid,
+    ranks: p.ranks,
+    threads: p.threads,
+    nodes: p.nodes,
+    sst_version: p.sst_version,
+    sst_bench_sha: p.sst_bench_sha,
+    host: p.host,
+    sdl_params: p.sdl_params,
+    sst_params: p.sst_params,
+    timing: p.timing,
+    simulated_time_ns: p.simulated_time_ns,
+    timestamp: source['@timestamp'],
+  };
+}
+
+app.get('/api/benchmarks/sst-perf/overview', heavyLimiter, async (req, res) => {
+  try {
+    const result = await esClient.search({
+      index: PERF_INDEX,
+      body: {
+        size: 0,
+        query: { exists: { field: 'sst_bench_perf.benchmark_id' } },
+        aggs: {
+          by_benchmark: {
+            terms: { field: 'sst_bench_perf.benchmark_id', size: 200 },
+            aggs: {
+              latest: {
+                top_hits: {
+                  size: 24,
+                  sort: [{ '@timestamp': { order: 'desc' } }],
+                  _source: [
+                    'sst_bench_perf.benchmark_id',
+                    'sst_bench_perf.sweep_name',
+                    'sst_bench_perf.sdl_file',
+                    'sst_bench_perf.jobtype',
+                    'sst_bench_perf.timing.max_run_time',
+                    'sst_bench_perf.timing.global_max_rss',
+                    'sst_bench_perf.timing.max_mempool_size',
+                    'sst_bench_perf.simulated_time_ns',
+                    'sst_bench_perf.ranks',
+                    'sst_bench_perf.threads',
+                    '@timestamp',
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const body = result.body || result;
+    const buckets = body.aggregations?.by_benchmark?.buckets || [];
+    const benchmarks = buckets.map((b) => {
+      const hits = b.latest?.hits?.hits || [];
+      const newest = hits[0]?._source;
+      const points = hits
+        .slice()
+        .reverse()
+        .map((h) => ({
+          timestamp: h._source?.['@timestamp'],
+          max_run_time: h._source?.sst_bench_perf?.timing?.max_run_time ?? null,
+          global_max_rss: h._source?.sst_bench_perf?.timing?.global_max_rss ?? null,
+          max_mempool_size: h._source?.sst_bench_perf?.timing?.max_mempool_size ?? null,
+        }));
+      perfParseCounters.hits += hits.length;
+      return {
+        benchmark_id: b.key,
+        sweep_name: newest?.sst_bench_perf?.sweep_name ?? null,
+        sdl_file: newest?.sst_bench_perf?.sdl_file ?? null,
+        jobtype: newest?.sst_bench_perf?.jobtype ?? null,
+        ranks: newest?.sst_bench_perf?.ranks ?? null,
+        threads: newest?.sst_bench_perf?.threads ?? null,
+        total_recent_points: hits.length,
+        latest_points: points,
+      };
+    });
+    benchmarks.sort((a, b) => {
+      const na = `${a.sweep_name}/${a.sdl_file}/${a.jobtype}`;
+      const nb = `${b.sweep_name}/${b.sdl_file}/${b.jobtype}`;
+      return na.localeCompare(nb);
+    });
+
+    res.json({ benchmarks, count: benchmarks.length });
+  } catch (error) {
+    console.error('sst-perf overview error:', error?.meta?.body?.error || error?.message || error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+const VALID_BENCHMARK_ID = /^[a-f0-9]{8,64}$/;
+
+const validateBenchmarkId = (req, res, next) => {
+  const { benchmarkId } = req.params;
+  if (!benchmarkId || !VALID_BENCHMARK_ID.test(benchmarkId)) {
+    return res.status(400).json({ error: 'Invalid benchmark id.' });
+  }
+  next();
+};
+
+function parsePerfDetailQuery(req) {
+  const metric = PERF_METRICS.has(req.query.metric) ? req.query.metric : PERF_DEFAULT_METRIC;
+  const limitRaw = parseInt(req.query.limit, 10);
+  const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 1000) : 200;
+  const filters = [];
+  const { ranks, threads, sst_version, since, until } = req.query;
+  if (ranks != null) {
+    const n = parseInt(ranks, 10);
+    if (Number.isFinite(n)) filters.push({ term: { 'sst_bench_perf.ranks': n } });
+  }
+  if (threads != null) {
+    const n = parseInt(threads, 10);
+    if (Number.isFinite(n)) filters.push({ term: { 'sst_bench_perf.threads': n } });
+  }
+  if (typeof sst_version === 'string' && sst_version.length > 0 && sst_version.length < 64) {
+    filters.push({ term: { 'sst_bench_perf.sst_version': sst_version } });
+  }
+  const range = {};
+  if (typeof since === 'string') range.gte = since;
+  if (typeof until === 'string') range.lte = until;
+  if (Object.keys(range).length) filters.push({ range: { '@timestamp': range } });
+  return { metric, limit, filters };
+}
+
+app.get('/api/benchmarks/sst-perf/:benchmarkId', validateBenchmarkId, async (req, res) => {
+  try {
+    const { metric, limit, filters } = parsePerfDetailQuery(req);
+    const result = await esClient.search({
+      index: PERF_INDEX,
+      body: {
+        size: limit,
+        sort: [{ '@timestamp': { order: 'asc' } }],
+        query: {
+          bool: {
+            filter: [
+              { term: { 'sst_bench_perf.benchmark_id': req.params.benchmarkId } },
+              ...filters,
+            ],
+          },
+        },
+        _source: [
+          'sst_bench_perf',
+          '@timestamp',
+        ],
+      },
+    });
+    const body = result.body || result;
+    const hits = body.hits?.hits || [];
+    const points = hits
+      .map((h) => pickPerfResponseFields(h._source))
+      .filter(Boolean);
+    const meta = points[points.length - 1] || points[0] || null;
+    res.json({
+      benchmark_id: req.params.benchmarkId,
+      metric,
+      metric_field: perfMetricField(metric),
+      count: points.length,
+      points,
+      meta: meta
+        ? {
+            sweep_name: meta.sweep_name,
+            sdl_file: meta.sdl_file,
+            jobtype: meta.jobtype,
+          }
+        : null,
+    });
+  } catch (error) {
+    console.error('sst-perf detail error:', error?.meta?.body?.error || error?.message || error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/benchmarks/sst-perf/:benchmarkId/filters', validateBenchmarkId, async (req, res) => {
+  try {
+    const result = await esClient.search({
+      index: PERF_INDEX,
+      body: {
+        size: 0,
+        query: {
+          bool: {
+            filter: [{ term: { 'sst_bench_perf.benchmark_id': req.params.benchmarkId } }],
+          },
+        },
+        aggs: {
+          ranks: { terms: { field: 'sst_bench_perf.ranks', size: 50 } },
+          threads: { terms: { field: 'sst_bench_perf.threads', size: 50 } },
+          sst_versions: { terms: { field: 'sst_bench_perf.sst_version', size: 50 } },
+          hosts: { terms: { field: 'sst_bench_perf.host', size: 50 } },
+        },
+      },
+    });
+    const body = result.body || result;
+    const pick = (b) => (body.aggregations?.[b]?.buckets || []).map((x) => x.key);
+    res.json({
+      ranks: pick('ranks'),
+      threads: pick('threads'),
+      sst_versions: pick('sst_versions'),
+      hosts: pick('hosts'),
+    });
+  } catch (error) {
+    console.error('sst-perf filters error:', error?.meta?.body?.error || error?.message || error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/benchmarks/sst-perf/_diag', (req, res) => {
+  res.json({ counters: perfParseCounters });
+});
+
+async function installPerfTemplate() {
+  try {
+    const templatePath = join(__dirname, '..', 'infra', 'es-template-sst-bench-perf.json');
+    if (!fs.existsSync(templatePath)) return;
+    const body = JSON.parse(fs.readFileSync(templatePath, 'utf-8'));
+    await esClient.indices.putTemplate({ name: 'sst-bench-perf', body });
+    console.log('✓ installed sst-bench-perf ES template');
+  } catch (err) {
+    console.warn('sst-bench-perf template install skipped:', err?.message || err);
+  }
+}
+
 // SPA catch-all
 app.get('*', (req, res) => {
   res.sendFile(join(__dirname, 'dist', 'index.html'));
 });
 
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, '0.0.0.0', async () => {
   console.log(`🚀 Jenkins Dashboard server running on port ${PORT}`);
   console.log(`📊 Elasticsearch host: ${esHost}`);
+  installPerfTemplate();
 });

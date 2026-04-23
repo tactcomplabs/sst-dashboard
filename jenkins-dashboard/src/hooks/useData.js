@@ -234,3 +234,82 @@ export function useParserBenchmarks() {
   return { ...data, loading, error, refresh: fetchBenchmarks };
 }
 
+export function useSstPerfOverview() {
+  const [data, setData] = useState({ benchmarks: [], count: 0 });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const fetchOverview = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const result = await api.getSstPerfOverview();
+      setData(result);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchOverview();
+    const interval = setInterval(fetchOverview, 60000);
+    return () => clearInterval(interval);
+  }, [fetchOverview]);
+
+  return { ...data, loading, error, refresh: fetchOverview };
+}
+
+export function useSstPerfDetail(benchmarkId, options = {}) {
+  const [data, setData] = useState({ points: [], meta: null, metric: 'max_run_time', count: 0 });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const fetchDetail = useCallback(async () => {
+    if (!benchmarkId) return;
+    try {
+      setLoading(true);
+      setError(null);
+      const result = await api.getSstPerfDetail(benchmarkId, options);
+      setData(result);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [benchmarkId, JSON.stringify(options)]);
+
+  useEffect(() => {
+    fetchDetail();
+  }, [fetchDetail]);
+
+  return { ...data, loading, error, refresh: fetchDetail };
+}
+
+export function useSstPerfFilters(benchmarkId) {
+  const [data, setData] = useState({ ranks: [], threads: [], sst_versions: [], hosts: [] });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    if (!benchmarkId) return;
+    (async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const result = await api.getSstPerfFilters(benchmarkId);
+        if (alive) setData(result);
+      } catch (err) {
+        if (alive) setError(err.message);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [benchmarkId]);
+
+  return { ...data, loading, error };
+}
+
