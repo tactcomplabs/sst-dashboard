@@ -7,16 +7,20 @@ import PerfSparklineCard from '../components/PerfSparklineCard';
 function avgLastRunTime(benchmarks) {
   const vals = [];
   for (const b of benchmarks) {
-    const pts = b.latest_points || [];
-    const last = pts[pts.length - 1]?.max_run_time;
-    if (typeof last === 'number') vals.push(last);
+    const builds = b.latest_builds || b.latest_points || [];
+    const last = builds[builds.length - 1];
+    const v = last?.p50_run_time ?? last?.max_run_time;
+    if (typeof v === 'number') vals.push(v);
   }
   if (vals.length === 0) return null;
   return vals.reduce((a, b) => a + b, 0) / vals.length;
 }
 
-function totalRecentPoints(benchmarks) {
-  return benchmarks.reduce((acc, b) => acc + (b.total_recent_points || 0), 0);
+function totalRecentBuilds(benchmarks) {
+  return benchmarks.reduce(
+    (acc, b) => acc + (b.total_recent_builds ?? b.total_recent_points ?? 0),
+    0
+  );
 }
 
 function SstPerfOverviewPage() {
@@ -34,7 +38,7 @@ function SstPerfOverviewPage() {
   }, [benchmarks, query]);
 
   const avgRt = useMemo(() => avgLastRunTime(benchmarks), [benchmarks]);
-  const totalPts = useMemo(() => totalRecentPoints(benchmarks), [benchmarks]);
+  const totalBuilds = useMemo(() => totalRecentBuilds(benchmarks), [benchmarks]);
 
   if (loading && benchmarks.length === 0) {
     return <LoadingState message="Loading benchmark performance data..." />;
@@ -71,16 +75,16 @@ function SstPerfOverviewPage() {
           variant="default"
         />
         <StatCard
-          title="Recent Points"
-          value={totalPts}
-          subtitle="across last 24 runs per benchmark"
+          title="Recent Builds"
+          value={totalBuilds}
+          subtitle="across last 24 builds per benchmark"
           icon={Activity}
           variant="success"
         />
         <StatCard
-          title="Avg Last Run Time"
+          title="Avg Last p50"
           value={avgRt == null ? '—' : (avgRt < 1 ? `${(avgRt * 1000).toFixed(0)}ms` : `${avgRt.toFixed(2)}s`)}
-          subtitle="mean of last points"
+          subtitle="mean of latest-build p50s"
           icon={Timer}
           variant="default"
         />

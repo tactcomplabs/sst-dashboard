@@ -287,6 +287,32 @@ export function useSstPerfDetail(benchmarkId, options = {}) {
   return { ...data, loading, error, refresh: fetchDetail };
 }
 
+export function useSstPerfTimeline(benchmarkId, options = {}) {
+  const [data, setData] = useState({ builds: [], meta: null, metric: 'max_run_time', count: 0 });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const fetchTimeline = useCallback(async () => {
+    if (!benchmarkId) return;
+    try {
+      setLoading(true);
+      setError(null);
+      const result = await api.getSstPerfTimeline(benchmarkId, options);
+      setData(result);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [benchmarkId, JSON.stringify(options)]);
+
+  useEffect(() => {
+    fetchTimeline();
+  }, [fetchTimeline]);
+
+  return { ...data, loading, error, refresh: fetchTimeline };
+}
+
 export function useSstPerfFilters(benchmarkId) {
   const [data, setData] = useState({ ranks: [], threads: [], sst_versions: [], hosts: [] });
   const [loading, setLoading] = useState(true);

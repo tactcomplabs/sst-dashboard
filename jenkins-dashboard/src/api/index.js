@@ -101,3 +101,11 @@ export async function getSstPerfDetail(benchmarkId, options = {}) {
 export async function getSstPerfFilters(benchmarkId) {
   return fetchJSON(`/benchmarks/sst-perf/${encodeURIComponent(benchmarkId)}/filters`);
 }
+
+export async function getSstPerfTimeline(benchmarkId, options = {}) {
+  const params = new URLSearchParams();
+  if (options.metric) params.set('metric', options.metric);
+  if (options.limit) params.set('limit', options.limit);
+  const q = params.toString();
+  return fetchJSON(`/benchmarks/sst-perf/${encodeURIComponent(benchmarkId)}/timeline${q ? '?' + q : ''}`);
+}

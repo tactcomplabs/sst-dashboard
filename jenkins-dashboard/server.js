@@ -2349,23 +2349,43 @@ app.get('/api/benchmarks/sst-perf/overview', heavyLimiter, async (req, res) => {
           by_benchmark: {
             terms: { field: 'sst_bench_perf.benchmark_id', size: 200 },
             aggs: {
-              latest: {
+              latest_run_meta: {
                 top_hits: {
-                  size: 24,
+                  size: 1,
                   sort: [{ '@timestamp': { order: 'desc' } }],
                   _source: [
-                    'sst_bench_perf.benchmark_id',
                     'sst_bench_perf.sweep_name',
                     'sst_bench_perf.sdl_file',
                     'sst_bench_perf.jobtype',
-                    'sst_bench_perf.timing.max_run_time',
-                    'sst_bench_perf.timing.global_max_rss',
-                    'sst_bench_perf.timing.max_mempool_size',
-                    'sst_bench_perf.simulated_time_ns',
-                    'sst_bench_perf.ranks',
-                    'sst_bench_perf.threads',
-                    '@timestamp',
                   ],
+                },
+              },
+              by_run: {
+                terms: {
+                  field: 'sst_bench_perf.run_id',
+                  size: 24,
+                  order: { latest_ts: 'desc' },
+                },
+                aggs: {
+                  latest_ts: { max: { field: '@timestamp' } },
+                  run_time_pcts: {
+                    percentiles: {
+                      field: 'sst_bench_perf.timing.max_run_time',
+                      percents: [50, 95],
+                    },
+                  },
+                  rss_p50: {
+                    percentiles: {
+                      field: 'sst_bench_perf.timing.global_max_rss',
+                      percents: [50],
+                    },
+                  },
+                  mempool_p50: {
+                    percentiles: {
+                      field: 'sst_bench_perf.timing.max_mempool_size',
+                      percents: [50],
+                    },
+                  },
                 },
               },
             },
@@ -2377,27 +2397,27 @@ app.get('/api/benchmarks/sst-perf/overview', heavyLimiter, async (req, res) => {
     const body = result.body || result;
     const buckets = body.aggregations?.by_benchmark?.buckets || [];
     const benchmarks = buckets.map((b) => {
-      const hits = b.latest?.hits?.hits || [];
-      const newest = hits[0]?._source;
-      const points = hits
-        .slice()
-        .reverse()
-        .map((h) => ({
-          timestamp: h._source?.['@timestamp'],
-          max_run_time: h._source?.sst_bench_perf?.timing?.max_run_time ?? null,
-          global_max_rss: h._source?.sst_bench_perf?.timing?.global_max_rss ?? null,
-          max_mempool_size: h._source?.sst_bench_perf?.timing?.max_mempool_size ?? null,
-        }));
-      perfParseCounters.hits += hits.length;
+      const newestSrc = b.latest_run_meta?.hits?.hits?.[0]?._source?.sst_bench_perf || {};
+      const runs = (b.by_run?.buckets || [])
+        .map((rb) => ({
+          run_id: rb.key,
+          ts_ms: rb.latest_ts?.value || 0,
+          timestamp: rb.latest_ts?.value_as_string || null,
+          n_configs: rb.doc_count,
+          p50_run_time: rb.run_time_pcts?.values?.['50.0'] ?? null,
+          p95_run_time: rb.run_time_pcts?.values?.['95.0'] ?? null,
+          p50_rss: rb.rss_p50?.values?.['50.0'] ?? null,
+          p50_mempool: rb.mempool_p50?.values?.['50.0'] ?? null,
+        }))
+        .sort((a, b) => a.ts_ms - b.ts_ms); // chronological
+      perfParseCounters.hits += runs.length;
       return {
         benchmark_id: b.key,
-        sweep_name: newest?.sst_bench_perf?.sweep_name ?? null,
-        sdl_file: newest?.sst_bench_perf?.sdl_file ?? null,
-        jobtype: newest?.sst_bench_perf?.jobtype ?? null,
-        ranks: newest?.sst_bench_perf?.ranks ?? null,
-        threads: newest?.sst_bench_perf?.threads ?? null,
-        total_recent_points: hits.length,
-        latest_points: points,
+        sweep_name: newestSrc.sweep_name ?? null,
+        sdl_file: newestSrc.sdl_file ?? null,
+        jobtype: newestSrc.jobtype ?? null,
+        total_recent_builds: runs.length,
+        latest_builds: runs,
       };
     });
     benchmarks.sort((a, b) => {
@@ -2491,6 +2511,100 @@ app.get('/api/benchmarks/sst-perf/:benchmarkId', validateBenchmarkId, async (req
     });
   } catch (error) {
     console.error('sst-perf detail error:', error?.meta?.body?.error || error?.message || error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/benchmarks/sst-perf/:benchmarkId/timeline', validateBenchmarkId, async (req, res) => {
+  try {
+    const metric = PERF_METRICS.has(req.query.metric) ? req.query.metric : PERF_DEFAULT_METRIC;
+    const limitRaw = parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 60;
+    const field = perfMetricField(metric);
+
+    const result = await esClient.search({
+      index: PERF_INDEX,
+      body: {
+        size: 0,
+        query: {
+          bool: {
+            filter: [{ term: { 'sst_bench_perf.benchmark_id': req.params.benchmarkId } }],
+          },
+        },
+        aggs: {
+          by_run: {
+            terms: {
+              field: 'sst_bench_perf.run_id',
+              size: limit,
+              order: { latest_ts: 'desc' },
+            },
+            aggs: {
+              latest_ts: { max: { field: '@timestamp' } },
+              stats: { stats: { field } },
+              pcts: { percentiles: { field, percents: [10, 50, 95] } },
+              meta: {
+                top_hits: {
+                  size: 1,
+                  sort: [{ '@timestamp': { order: 'desc' } }],
+                  _source: [
+                    'sst_bench_perf.sst_version',
+                    'sst_bench_perf.sst_bench_sha',
+                    'sst_bench_perf.sweep_name',
+                    'sst_bench_perf.sdl_file',
+                    'sst_bench_perf.jobtype',
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const body = result.body || result;
+    const buckets = body.aggregations?.by_run?.buckets || [];
+    const builds = buckets
+      .map((b) => {
+        const meta = b.meta?.hits?.hits?.[0]?._source?.sst_bench_perf || {};
+        const stats = b.stats || {};
+        const pcts = b.pcts?.values || {};
+        return {
+          run_id: b.key,
+          ts: b.latest_ts?.value_as_string || null,
+          ts_ms: b.latest_ts?.value || null,
+          n_configs: b.doc_count,
+          min: stats.min ?? null,
+          max: stats.max ?? null,
+          avg: stats.avg ?? null,
+          p10: pcts['10.0'] ?? null,
+          p50: pcts['50.0'] ?? null,
+          p95: pcts['95.0'] ?? null,
+          sst_version: meta.sst_version ?? null,
+          sst_bench_sha: meta.sst_bench_sha ?? null,
+          sweep_name: meta.sweep_name ?? null,
+          sdl_file: meta.sdl_file ?? null,
+          jobtype: meta.jobtype ?? null,
+        };
+      })
+      .sort((a, b) => (a.ts_ms || 0) - (b.ts_ms || 0)); // chronological for charting
+
+    const meta = builds[builds.length - 1] || null;
+    res.json({
+      benchmark_id: req.params.benchmarkId,
+      metric,
+      metric_field: field,
+      count: builds.length,
+      builds,
+      meta: meta
+        ? {
+            sweep_name: meta.sweep_name,
+            sdl_file: meta.sdl_file,
+            jobtype: meta.jobtype,
+          }
+        : null,
+    });
+  } catch (error) {
+    console.error('sst-perf timeline error:', error?.meta?.body?.error || error?.message || error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

@@ -10,10 +10,10 @@ function formatRunTime(s) {
   return `${(s / 60).toFixed(1)}m`;
 }
 
-function delta(points) {
-  if (!points || points.length < 2) return null;
-  const a = points[points.length - 2].max_run_time;
-  const b = points[points.length - 1].max_run_time;
+function delta(builds) {
+  if (!builds || builds.length < 2) return null;
+  const a = builds[builds.length - 2].p50_run_time;
+  const b = builds[builds.length - 1].p50_run_time;
   if (a == null || b == null || a === 0) return null;
   return ((b - a) / a) * 100;
 }
@@ -31,17 +31,17 @@ function normalize(values) {
 export default function PerfSparklineCard({ benchmark, mode = 'absolute' }) {
   const [hovered, setHovered] = useState(false);
 
-  const series = benchmark.latest_points || [];
-  const d = delta(series);
+  const builds = benchmark.latest_builds || benchmark.latest_points || [];
+  const d = delta(builds);
 
   const data = useMemo(() => {
-    const valuesAbs = series.map((p) => p.max_run_time);
+    const valuesAbs = builds.map((b) => b.p50_run_time ?? b.max_run_time);
     const values = mode === 'shape' ? normalize(valuesAbs) : valuesAbs;
-    return values.map((v, i) => ({ idx: i, v, ts: series[i]?.timestamp }));
-  }, [series, mode]);
+    return values.map((v, i) => ({ idx: i, v, ts: builds[i]?.timestamp }));
+  }, [builds, mode]);
 
-  const lastPoint = series[series.length - 1];
-  const lastValue = lastPoint?.max_run_time;
+  const lastBuild = builds[builds.length - 1];
+  const lastValue = lastBuild?.p50_run_time ?? lastBuild?.max_run_time;
 
   const label = benchmark.sdl_file
     ? benchmark.sdl_file.split('/').pop()?.replace(/\.py$/, '') || benchmark.benchmark_id
@@ -68,7 +68,7 @@ export default function PerfSparklineCard({ benchmark, mode = 'absolute' }) {
       </div>
 
       <div className="h-12 -mx-1">
-        {series.length > 1 ? (
+        {builds.length > 1 ? (
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={data} margin={{ top: 2, right: 2, bottom: 2, left: 2 }}>
               <YAxis hide domain={['dataMin', 'dataMax']} />
@@ -84,14 +84,14 @@ export default function PerfSparklineCard({ benchmark, mode = 'absolute' }) {
           </ResponsiveContainer>
         ) : (
           <div className="h-full flex items-center justify-center text-[11px] text-slate-600">
-            {series.length === 1 ? 'single point — need 2+ for a trend' : 'no data'}
+            {builds.length === 1 ? 'single build — need 2+ for a trend' : 'no data'}
           </div>
         )}
       </div>
 
       <div className="flex items-end justify-between mt-2">
         <div>
-          <div className="text-[10px] uppercase tracking-wider text-slate-500">Last</div>
+          <div className="text-[10px] uppercase tracking-wider text-slate-500">Last p50</div>
           <div className="font-mono text-sm text-slate-200">{formatRunTime(lastValue)}</div>
         </div>
         <div className="text-right">
@@ -101,8 +101,8 @@ export default function PerfSparklineCard({ benchmark, mode = 'absolute' }) {
           </div>
         </div>
         <div className="text-right">
-          <div className="text-[10px] uppercase tracking-wider text-slate-500">N</div>
-          <div className="font-mono text-xs text-slate-300">{series.length}</div>
+          <div className="text-[10px] uppercase tracking-wider text-slate-500">Builds</div>
+          <div className="font-mono text-xs text-slate-300">{builds.length}</div>
         </div>
       </div>
     </Link>
