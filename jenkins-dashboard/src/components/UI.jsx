@@ -127,6 +127,40 @@ export function StatCard({ title, value, subtitle, icon: Icon, trend, variant = 
   );
 }
 
+/**
+ * Readout — instrument-style labeled value. Use in horizontal status strips
+ * for the Bench Scope benchmark section. No card chrome, no icons by default,
+ * tabular nums. Variants colour the value:
+ *   - default → ink-1
+ *   - warn    → annot-warn (regression / high p95)
+ *   - trigger → annot-trigger (change marker)
+ *   - signal  → phosphor-500 (active reading)
+ */
+export function Readout({ label, value, sub, variant = 'default', className = '' }) {
+  const valueColor = {
+    default: 'text-ink-1',
+    warn: 'text-annot-warn',
+    trigger: 'text-annot-trigger',
+    signal: 'text-phosphor-500',
+  }[variant] || 'text-ink-1';
+
+  return (
+    <div className={`flex flex-col gap-0.5 ${className}`}>
+      <span className="text-[10px] uppercase tracking-[0.12em] text-ink-3 font-mono">
+        {label}
+      </span>
+      <span className={`font-mono tabular-nums text-base ${valueColor}`}>
+        {value ?? '—'}
+      </span>
+      {sub && (
+        <span className="text-[10px] text-ink-3 font-mono">
+          {sub}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export function LoadingSpinner({ size = 'md', className = '' }) {
   const sizes = {
     sm: 'w-4 h-4',

@@ -4,7 +4,7 @@ import { Filter, X } from 'lucide-react';
 function Section({ title, children }) {
   return (
     <div className="space-y-2">
-      <div className="text-[10px] uppercase tracking-wider text-slate-500">{title}</div>
+      <div className="text-[10px] uppercase tracking-[0.12em] font-mono text-ink-3">{title}</div>
       {children}
     </div>
   );
@@ -14,10 +14,10 @@ function Chip({ active, onClick, children }) {
   return (
     <button
       onClick={onClick}
-      className={`text-xs px-2.5 py-1 rounded-md border transition-colors ${
+      className={`text-[11px] font-mono tabular-nums px-2 py-0.5 rounded border transition-colors ${
         active
-          ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
-          : 'bg-slate-900/60 border-slate-800/60 text-slate-400 hover:text-white hover:border-slate-700/60'
+          ? 'bg-phosphor-500/15 border-phosphor-500/50 text-phosphor-300'
+          : 'bg-bezel-3 border-graticule-2 text-ink-2 hover:text-ink-1 hover:border-graticule-3'
       }`}
     >
       {children}
@@ -67,16 +67,16 @@ export default function PerfFilterSidebar({ facets, value, onChange, mode = 'sin
       value.sst_version);
 
   return (
-    <aside className="rounded-xl bg-slate-900/50 backdrop-blur-xl border border-slate-800/50 p-4 space-y-5">
+    <aside className="rounded-md bg-bezel-1 border border-graticule-2 p-4 space-y-5">
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 text-slate-300 text-sm font-medium">
-          <Filter className="w-4 h-4" />
-          Filters
+        <div className="flex items-center gap-2 text-ink-1 text-[11px] font-mono uppercase tracking-[0.12em]">
+          <Filter className="w-3.5 h-3.5" />
+          Controls
         </div>
         {any && (
           <button
             onClick={() => onChange({})}
-            className="text-xs text-slate-500 hover:text-white flex items-center gap-1"
+            className="text-[10px] font-mono uppercase tracking-[0.12em] text-ink-3 hover:text-ink-1 flex items-center gap-1"
           >
             <X className="w-3 h-3" /> Clear
           </button>
@@ -120,7 +120,7 @@ export default function PerfFilterSidebar({ facets, value, onChange, mode = 'sin
       )}
 
       {ranks.length === 0 && threads.length === 0 && sst_versions.length === 0 && (
-        <div className="text-xs text-slate-500">No filter facets yet. Run more sweeps to populate.</div>
+        <div className="text-xs font-mono text-ink-3">No filter facets yet. Run more sweeps to populate.</div>
       )}
     </aside>
   );

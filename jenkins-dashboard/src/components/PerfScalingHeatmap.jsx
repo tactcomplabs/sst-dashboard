@@ -1,25 +1,34 @@
 import React, { useMemo, useState } from 'react';
-import { Database } from 'lucide-react';
 import { EmptyState } from './UI';
-
-// Sequential colour scale: low (good) -> high (bad).
-// Uses HSL interpolation between emerald-400 and rose-500 with a touch of amber midway.
-function colorFor(t) {
-  // t in [0,1]; clamp.
-  const x = Math.max(0, Math.min(1, t));
-  // hue from 150 (emerald) -> 40 (amber) -> 0 (rose)
-  const hue = 150 + (0 - 150) * x;
-  // saturation/lightness: keep the dark dashboard aesthetic
-  const sat = 65;
-  const light = 38 + (1 - x) * 12; // slightly brighter for low values
-  return `hsl(${hue}, ${sat}%, ${light}%)`;
-}
+import TopologyLattice from './TopologyLattice';
 
 /**
- * points: array of perf-detail points (each has ranks, threads, run_id, and value at metric.path)
- * pickValue: function(point) -> number | null
- * latestRunId: string — only render points whose run_id matches; if absent, use newest run_id present
+ * Bench Scope sequential colour scale.
+ *   t in [0,1]; low (good) → phosphor green; mid → annot-trigger amber;
+ *   high (bad) → annot-warn red. Single-temperature, no rainbow.
  */
+function colorFor(t) {
+  const x = Math.max(0, Math.min(1, t));
+  // Anchor stops:
+  //   0.0  phosphor-500   #7af8b1 (h=145, s=89, l=73)
+  //   0.5  annot-trigger  #e7b34a (h=40,  s=78, l=60)
+  //   1.0  annot-warn     #e76d6d (h=0,   s=72, l=66)
+  // Compute via HSL interpolation across the two segments.
+  const a = { h: 145, s: 65, l: 38 };
+  const b = { h: 40,  s: 70, l: 46 };
+  const c = { h: 0,   s: 60, l: 50 };
+  const lerp = (u, v, k) => u + (v - u) * k;
+  let h, s, l;
+  if (x <= 0.5) {
+    const k = x / 0.5;
+    h = lerp(a.h, b.h, k); s = lerp(a.s, b.s, k); l = lerp(a.l, b.l, k);
+  } else {
+    const k = (x - 0.5) / 0.5;
+    h = lerp(b.h, c.h, k); s = lerp(b.s, c.s, k); l = lerp(b.l, c.l, k);
+  }
+  return `hsl(${h.toFixed(1)}, ${s.toFixed(1)}%, ${l.toFixed(1)}%)`;
+}
+
 export default function PerfScalingHeatmap({ points, pickValue, fmt, latestRunId }) {
   const [hovered, setHovered] = useState(null);
 
@@ -27,13 +36,12 @@ export default function PerfScalingHeatmap({ points, pickValue, fmt, latestRunId
     const all = points || [];
     if (!all.length) return { cells: [], ranksAxis: [], threadsAxis: [], latestRun: null, range: null };
 
-    // Newest run_id wins (server returns asc by @timestamp; last is newest)
     const newest = latestRunId || all[all.length - 1]?.run_id;
     const filtered = all.filter((p) => p.run_id === newest);
 
     const ranksSet = new Set();
     const threadsSet = new Set();
-    const map = new Map(); // `${r}/${t}` -> { value, count, point }
+    const map = new Map();
     for (const p of filtered) {
       const v = pickValue(p);
       if (typeof v !== 'number') continue;
@@ -82,28 +90,28 @@ export default function PerfScalingHeatmap({ points, pickValue, fmt, latestRunId
       <EmptyState
         title="No scaling data for the latest build"
         description="Run a sweeper that varies ranks × threads to populate the heatmap."
-        icon={Database}
+        icon={() => null}
       />
     );
   }
 
   return (
     <div className="space-y-3 h-full flex flex-col">
-      <div className="flex items-center justify-between text-xs text-slate-400">
+      <div className="flex items-center justify-between text-[11px] font-mono uppercase tracking-[0.12em] text-ink-3">
         <div>
           Latest build:{' '}
-          <span className="font-mono text-slate-300">{latestRun?.split('-').pop()}</span>
+          <span className="text-ink-1 normal-case tracking-normal">{latestRun?.split('-').pop()}</span>
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-slate-500">low</span>
+          <span>baseline</span>
           <div
             className="h-2 w-32 rounded"
             style={{
               background: `linear-gradient(to right, ${colorFor(0)}, ${colorFor(0.5)}, ${colorFor(1)})`,
             }}
           />
-          <span className="text-slate-500">high</span>
-          <span className="ml-2 text-slate-500">
+          <span>regression</span>
+          <span className="ml-2 text-ink-2 normal-case tracking-normal tabular-nums">
             {fmt(range.min)} → {fmt(range.max)}
           </span>
         </div>
@@ -113,17 +121,17 @@ export default function PerfScalingHeatmap({ points, pickValue, fmt, latestRunId
         <div
           className="grid gap-1 text-xs font-mono"
           style={{
-            gridTemplateColumns: `auto repeat(${ranksAxis.length}, minmax(64px, 1fr))`,
+            gridTemplateColumns: `auto repeat(${ranksAxis.length}, minmax(76px, 1fr))`,
           }}
         >
           {/* Header row */}
-          <div className="text-[10px] uppercase tracking-wider text-slate-500 px-2 py-1">
+          <div className="text-[10px] uppercase tracking-[0.12em] text-ink-3 px-2 py-1">
             t \ r
           </div>
           {ranksAxis.map((r) => (
             <div
               key={`hr-${r}`}
-              className="text-center text-slate-400 px-2 py-1 border-b border-slate-800/60"
+              className="text-center text-ink-2 px-2 py-1 border-b border-graticule-2"
             >
               {r}
             </div>
@@ -132,7 +140,7 @@ export default function PerfScalingHeatmap({ points, pickValue, fmt, latestRunId
           {/* Body */}
           {threadsAxis.map((t) => (
             <React.Fragment key={`row-${t}`}>
-              <div className="text-slate-400 px-2 py-1 border-r border-slate-800/60 flex items-center">
+              <div className="text-ink-2 px-2 py-1 border-r border-graticule-2 flex items-center">
                 {t}
               </div>
               {ranksAxis.map((r) => {
@@ -141,38 +149,42 @@ export default function PerfScalingHeatmap({ points, pickValue, fmt, latestRunId
                   return (
                     <div
                       key={`c-${r}-${t}`}
-                      className="rounded bg-slate-900/50 border border-slate-800/50 text-slate-700 text-center py-2"
+                      className="rounded bg-bezel-3 border border-graticule-2 text-ink-3 text-center py-2"
                     >
                       —
                     </div>
                   );
                 }
-                const t01 = range.span > 0 ? (cell.value - range.min) / range.span : 0.5;
+                const t01 = range.span > 0 ? (cell.value - range.min) / range.span : 0.0;
                 const isHovered = hovered === `${r}/${t}`;
                 return (
                   <div
                     key={`c-${r}-${t}`}
                     onMouseEnter={() => setHovered(`${r}/${t}`)}
                     onMouseLeave={() => setHovered(null)}
-                    className={`rounded text-center py-2 px-1 transition-all cursor-default ${
-                      isHovered ? 'ring-1 ring-white/40 scale-[1.03]' : ''
+                    className={`rounded text-center py-2 px-2 transition-all cursor-default flex flex-col items-center gap-1 ${
+                      isHovered ? 'ring-1 ring-ink-1/40 scale-[1.02]' : ''
                     }`}
-                    style={{
-                      backgroundColor: colorFor(t01),
-                      color: '#0f172a',
-                      fontWeight: 600,
-                    }}
+                    style={{ backgroundColor: colorFor(t01) }}
                     title={`ranks=${r} threads=${t} → ${fmt(cell.value)}${cell.count > 1 ? ` (${cell.count} runs)` : ''}`}
                   >
-                    {fmt(cell.value)}
+                    <TopologyLattice
+                      ranks={r}
+                      threads={t}
+                      size={18}
+                      color="#0a0c0d"
+                    />
+                    <span className="text-[11px] font-semibold text-bezel-0 tabular-nums">
+                      {fmt(cell.value)}
+                    </span>
                   </div>
                 );
               })}
             </React.Fragment>
           ))}
         </div>
-        <div className="mt-3 text-[11px] text-slate-500 px-1">
-          Rows = threads, Columns = ranks. Cell shows the metric value for that (ranks × threads) config in the latest build.
+        <div className="mt-3 text-[10px] text-ink-3 font-mono uppercase tracking-[0.12em] px-1">
+          rows = threads · columns = ranks · cell glyph = MPI topology · cell colour = metric vs latest-build range
         </div>
       </div>
     </div>

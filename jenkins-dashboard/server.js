@@ -2357,9 +2357,14 @@ app.get('/api/benchmarks/sst-perf/overview', heavyLimiter, async (req, res) => {
                     'sst_bench_perf.sweep_name',
                     'sst_bench_perf.sdl_file',
                     'sst_bench_perf.jobtype',
+                    'sst_bench_perf.simulated_time_ns',
+                    'sst_bench_perf.timing.max_run_time',
+                    'sst_bench_perf.timing.global_max_tv_depth',
                   ],
                 },
               },
+              max_ranks:   { max: { field: 'sst_bench_perf.ranks'   } },
+              max_threads: { max: { field: 'sst_bench_perf.threads' } },
               by_run: {
                 terms: {
                   field: 'sst_bench_perf.run_id',
@@ -2368,6 +2373,16 @@ app.get('/api/benchmarks/sst-perf/overview', heavyLimiter, async (req, res) => {
                 },
                 aggs: {
                   latest_ts: { max: { field: '@timestamp' } },
+                  run_meta: {
+                    top_hits: {
+                      size: 1,
+                      sort: [{ '@timestamp': { order: 'desc' } }],
+                      _source: [
+                        'sst_bench_perf.sst_version',
+                        'sst_bench_perf.sst_bench_sha',
+                      ],
+                    },
+                  },
                   run_time_pcts: {
                     percentiles: {
                       field: 'sst_bench_perf.timing.max_run_time',
@@ -2399,16 +2414,21 @@ app.get('/api/benchmarks/sst-perf/overview', heavyLimiter, async (req, res) => {
     const benchmarks = buckets.map((b) => {
       const newestSrc = b.latest_run_meta?.hits?.hits?.[0]?._source?.sst_bench_perf || {};
       const runs = (b.by_run?.buckets || [])
-        .map((rb) => ({
-          run_id: rb.key,
-          ts_ms: rb.latest_ts?.value || 0,
-          timestamp: rb.latest_ts?.value_as_string || null,
-          n_configs: rb.doc_count,
-          p50_run_time: rb.run_time_pcts?.values?.['50.0'] ?? null,
-          p95_run_time: rb.run_time_pcts?.values?.['95.0'] ?? null,
-          p50_rss: rb.rss_p50?.values?.['50.0'] ?? null,
-          p50_mempool: rb.mempool_p50?.values?.['50.0'] ?? null,
-        }))
+        .map((rb) => {
+          const meta = rb.run_meta?.hits?.hits?.[0]?._source?.sst_bench_perf || {};
+          return {
+            run_id: rb.key,
+            ts_ms: rb.latest_ts?.value || 0,
+            timestamp: rb.latest_ts?.value_as_string || null,
+            n_configs: rb.doc_count,
+            sst_version: meta.sst_version ?? null,
+            sst_bench_sha: meta.sst_bench_sha ?? null,
+            p50_run_time: rb.run_time_pcts?.values?.['50.0'] ?? null,
+            p95_run_time: rb.run_time_pcts?.values?.['95.0'] ?? null,
+            p50_rss: rb.rss_p50?.values?.['50.0'] ?? null,
+            p50_mempool: rb.mempool_p50?.values?.['50.0'] ?? null,
+          };
+        })
         .sort((a, b) => a.ts_ms - b.ts_ms); // chronological
       perfParseCounters.hits += runs.length;
       return {
@@ -2416,6 +2436,11 @@ app.get('/api/benchmarks/sst-perf/overview', heavyLimiter, async (req, res) => {
         sweep_name: newestSrc.sweep_name ?? null,
         sdl_file: newestSrc.sdl_file ?? null,
         jobtype: newestSrc.jobtype ?? null,
+        max_ranks: b.max_ranks?.value ?? null,
+        max_threads: b.max_threads?.value ?? null,
+        latest_simulated_time_ns: newestSrc.simulated_time_ns ?? null,
+        latest_max_run_time: newestSrc.timing?.max_run_time ?? null,
+        latest_max_tv_depth: newestSrc.timing?.global_max_tv_depth ?? null,
         total_recent_builds: runs.length,
         latest_builds: runs,
       };
@@ -2542,6 +2567,9 @@ app.get('/api/benchmarks/sst-perf/:benchmarkId/timeline', validateBenchmarkId, a
               latest_ts: { max: { field: '@timestamp' } },
               stats: { stats: { field } },
               pcts: { percentiles: { field, percents: [10, 50, 95] } },
+              // Always-on TV depth signal for the secondary trace, regardless
+              // of selected metric.
+              tv_max: { max: { field: 'sst_bench_perf.timing.global_max_tv_depth' } },
               meta: {
                 top_hits: {
                   size: 1,
@@ -2579,6 +2607,7 @@ app.get('/api/benchmarks/sst-perf/:benchmarkId/timeline', validateBenchmarkId, a
           p10: pcts['10.0'] ?? null,
           p50: pcts['50.0'] ?? null,
           p95: pcts['95.0'] ?? null,
+          tv_depth_max: b.tv_max?.value ?? null,
           sst_version: meta.sst_version ?? null,
           sst_bench_sha: meta.sst_bench_sha ?? null,
           sweep_name: meta.sweep_name ?? null,
